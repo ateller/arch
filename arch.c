@@ -26,10 +26,29 @@ int temparch = 0, archivecounter = 0;
 	}
 }
 */
-void pack(int descr)
+void pack(int descr, char* name)
 {	
-	
+	char *shortname, *file;
+	long int seconddescr, i;
+	struct stat temp;
 	printf("pack file descr %d\n", descr);
+	lseek(descr, 0, 0);
+	shortname = strrchr(name, '/');
+	if (shortname==NULL) shortname = name;
+	i=strlen(shortname);
+	write(temparch,&i,4);
+	write(temparch, shortname, i);
+	fstat(descr, &temp);
+	write(temparch,&(temp.st_size),4);
+	file = (char*) malloc(1024);
+	for(;i = read(descr,file,1024);)
+	{
+		write(temparch,file,i);
+		free(file);
+		file = (char*) malloc(1024);
+	}
+	free(file);
+	close(descr);
 }
 void packdir(char* path)
 {
@@ -71,9 +90,9 @@ int createarchive(char* path, char* name)
 	{
 		name[0] = 'a';
 		name[1] = 48 + archivecounter;
-		name[2] = 0;
-		strcat(name, ".daf");	
+		name[2] = 0;	
 	}
+	strcat(name, ".daf");
 	strncat(fullpath, name, 255 - strlen(fullpath));
 	temparch = open(fullpath, O_CREAT|O_WRONLY|O_TRUNC, S_IWUSR|S_IRUSR|S_IWGRP|S_IRGRP|S_IROTH);
 	printf("temparchivepath %s\n", fullpath);		
@@ -180,7 +199,7 @@ int main(int argc, char *argv[])
 							if (!temparch) 	createarchive(path, tempname); //создать файл для архивирования, если не создан
 							if (!flag) 
 							{
-								pack(tempf);
+								pack(tempf, argv[i]);
 								break;
 							}
 							else packdir(try);
@@ -198,7 +217,7 @@ int main(int argc, char *argv[])
 					if (!temparch) 	createarchive(path, tempname); //создать файл для архивирования, если не создан
 					if (!flag) 
 					{
-						pack(tempf);
+						pack(tempf,argv[i]);
 						break;
 					}
 					else packdir(argv[i]);
