@@ -27,7 +27,8 @@ int temparch = 0, archivecounter = 0;
 }
 */
 void pack(int descr)
-{
+{	
+	
 	printf("pack file descr %d\n", descr);
 }
 void packdir(char* path)
@@ -74,7 +75,7 @@ int createarchive(char* path, char* name)
 		strcat(name, ".daf");	
 	}
 	strncat(fullpath, name, 255 - strlen(fullpath));
-	temparch = open(fullpath, O_CREAT|O_WRONLY|O_TRUNC, S_IWUSR|S_IWGRP|S_IWOTH);
+	temparch = open(fullpath, O_CREAT|O_WRONLY|O_TRUNC, S_IWUSR|S_IRUSR|S_IWGRP|S_IRGRP|S_IROTH);
 	printf("temparchivepath %s\n", fullpath);		
 	archivecounter++;
 	write(temparch, "ARCHIVE", 7);
