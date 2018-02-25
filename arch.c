@@ -28,6 +28,8 @@ int temparch = 0, archivecounter = 0;
 void packdir()
 {}
 
+void packfile( 
+
 void unpack()
 {}
 */
@@ -43,6 +45,7 @@ int whatisthis(char* path)
 int tryfullpath(char* path, char* full)
 {	
 	strcpy(full, cwd);
+	if (path[0] != '/') strcat(full, "/");
 	strncat(full, path, 255-strlen(cwd));
 	return whatisthis(full);  
 }
@@ -92,7 +95,7 @@ int main(int argc, char *argv[])
 								strcpy(path, try);
 								break;
 							case 2:
-								printf("Error, something bad was entered, the default path will be used\n");		//если вообще непонятно что введено после флага
+								printf("Error, something bad was entered, the default path will be used\n"); //если вообще непонятно что введено после флага
 								break;
 						}
 						break;

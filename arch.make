@@ -1,7 +1,7 @@
-all: arch
-arch.o: arch.c
-	gcc -c arch.c -fsanitize=address
+CC=gcc
+CFLAGS=-fsanitize=address
 
-arch: arch.o
-	gcc -o arch arch.o -fsanitize=address
+arch: arch.c
 
+clean: 
+	-rm arch
