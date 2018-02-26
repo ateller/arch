@@ -1,7 +1,7 @@
 CC=gcc
-CFLAGS=-fsanitize=address
+CFLAGS=-fsanitize=address -g
 
-arch: arch.c
-
+dream-archiver: arch.c
+	$(CC) -o dream-archiver arch.c $(CFLAGS)
 clean: 
-	-rm arch
+	-rm dream-archiver

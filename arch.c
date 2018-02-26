@@ -26,40 +26,6 @@ int temparch = 0, archivecounter = 0;
 	}
 }
 */
-void pack(int descr, char* name)
-{	
-	char *shortname, *file;
-	long int seconddescr, i;
-	struct stat temp;
-	printf("pack file descr %d\n", descr);
-	lseek(descr, 0, 0);
-	shortname = strrchr(name, '/');
-	if (shortname==NULL) shortname = name;
-	i=strlen(shortname);
-	write(temparch,&i,4);
-	write(temparch, shortname, i);
-	fstat(descr, &temp);
-	write(temparch,&(temp.st_size),4);
-	file = (char*) malloc(1024);
-	for(;i = read(descr,file,1024);)
-	{
-		write(temparch,file,i);
-		free(file);
-		file = (char*) malloc(1024);
-	}
-	free(file);
-	close(descr);
-}
-void packdir(char* path)
-{
-	printf("pack way %s\n", path);
-}
-
-void unpack(int f, char* path)
-{
-	printf("unpack file descr %d\n", f);
-}
-
 
 int whatisthis(char* path)
 {
@@ -75,6 +41,111 @@ int tryfullpath(char* path, char* full)
 	if (path[0] != '/') strcat(full, "/");
 	strncat(full, path, 255-strlen(cwd));
 	return whatisthis(full);  
+}
+
+void pack(int descr, char* name)
+{	
+	char file[1024], *shortname;
+	long int i;
+	struct stat temp;
+	
+	printf("pack file descr %d\n", descr);
+	lseek(descr, 0, 0);
+	shortname = strrchr(name, '/');
+	if (shortname==NULL) shortname = name;		//если файл в одной директории с программой
+	i=strlen(shortname)+1;		//чтобы записать с завершающим нулем
+	write(temparch,&i,4);	
+	write(temparch, shortname, i);	//потом по последнему байту будем отличать, имя это файла или директории
+	fstat(descr, &temp);
+	write(temparch,&(temp.st_size),4);	//запишем размер файла
+	for(;i = read(descr,file,1024);)		// и порциями сам файл
+	{
+		write(temparch,file,i);
+	}
+	close(descr);
+}
+void packdir(char* path)
+{
+	printf("pack way %s\n", path);
+	DIR *dir = opendir(path);
+	struct dirent *temp = readdir(dir);  //откроем первый файл в директории
+	char temppath[256], *name;
+	long int len = strlen(path), namelen;	//узнаем длину пути
+	
+	name = strrchr(path, '/'); //и начало последней части пути - имя директории, в которой находимся
+	if (name == NULL) name = path;
+	namelen = len + 1 - (name - path);
+	write(temparch, &namelen, 4);
+	write(temparch, name, namelen - 1);	//записываем имя
+	write(temparch, "{", 1); //указывает, что сейчас будет содержимое директории
+	strcpy(temppath,path);
+	temppath[len] = '/';
+	len++;
+	temppath[len] = 0;
+	for(;temp!=NULL;)
+	{
+		if(temp->d_name[0] != '.')
+		{
+			write(temparch,"\0",1);		//с 0 начинается каждый файл в директории
+			strcat(temppath,temp->d_name);
+			if (!whatisthis(temppath)) pack(open(temppath, O_RDONLY), temp->d_name); 
+			else packdir(temppath);
+		}
+		temp = readdir(dir);	//открываем новый файл
+		temppath[len] = 0;	//отрезаем имя
+	}
+	write(temparch,"}",1); //содержимое директории закончилось
+	closedir(dir);
+}
+
+void unpackfile(char* path, int f)
+{
+	char file[1024];
+	long int i, len, descr;
+	
+	descr = open(path, O_CREAT|O_WRONLY|O_TRUNC, S_IWUSR|S_IRUSR|S_IWGRP|S_IRGRP|S_IROTH);
+	read(f, &len, 4);
+	for(;len > 0;)
+	{
+		i = len -= 1024;
+		if (i > 0) i = 1024;
+		else i += 1024;
+		read(f, file, i);
+		write(descr, file, i);
+	}
+	close(descr);
+}
+
+void unpack(char* path, int f);
+
+void unpackdir(char* path, int f)
+{
+	char check;
+	
+	mkdir(path,  O_CREAT|O_WRONLY|O_TRUNC, S_IWUSR|S_IRUSR|S_IWGRP|S_IRGRP|S_IROTH);
+	read(f, &check, 1);
+	for(;!check;)	unpack(path, f);
+}
+
+void unpack(char* path, int f)
+{
+	char temppath[256];
+	int lenname, len;
+	
+	while(!eof(f))
+	{
+		read(f, &lenname, 4);
+		len = strlen(path);
+		strcpy (temppath, path);
+		read (f, temppath + len, lenname);
+		len+=lenname;
+		if(temppath[len] == '{') 
+		{
+			temppath[len] = 0;
+			unpackdir(temppath, f);
+		}
+		else unpackfile(temppath, f);
+	}
 }
 
 int createarchive(char* path, char* name)
@@ -126,7 +197,8 @@ int main(int argc, char *argv[])
 				path[0] = 0;
 			}
 			if (i == (argc-1)) printf("Warning, the last argument is flag\n");
-			else if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1])) printf("Warning, two flags are entered one after another\n"); //если два флага подряд, забить на первый
+			else if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1])) 
+			printf("Warning, two flags are entered one after another\n"); //если два флага подряд, забить на первый
 			else 
 			{
 				switch (whatisthis(argv[i+1]))
@@ -167,7 +239,8 @@ int main(int argc, char *argv[])
 				path[0] = 0;
 			}
 			if (i == (argc-1)) printf("Warning, the last argument is flag\n");
-			else if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1])) printf("Warning, two flags are entered one after another\n"); //если два флага подряд, забить на первый
+			else if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1])) 
+			printf("Warning, two flags are entered one after another\n"); //если два флага подряд, забить на первый
 			else if (strchr(argv[i+1], '/')) printf ("The file name can not contain /\n");
 			else 
 			{
