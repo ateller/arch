@@ -7,25 +7,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-char cwd[256];
-int temparch = 0, archivecounter = 0;
-
-/*void pack()
-{
-	int i;
-	DIR *dir;
-	struct dirent *temp = NULL;
-	//dir = opendir(temppath);
-	temp = readdir(dir);
-	for (i = 0; temp!=NULL; i++)
-	{
-		
-		//strcat (temppath, temp->d_name);
-		printf("file %d %s\n", i, temp->d_name);
-		temp = readdir(dir);
-	}
-}
-*/
+int temparch = 0;
+char temparchivepath[256];
 
 int whatisthis(char* path)
 {
@@ -35,7 +18,7 @@ int whatisthis(char* path)
 	if (S_ISREG(temp.st_mode)) return 0;	//файл
 }
 
-int tryfullpath(char* path, char* full)
+int tryfullpath(char* cwd, char* path, char* full)
 {	
 	strcpy(full, cwd);
 	if (path[0] != '/') strcat(full, "/");
@@ -49,15 +32,15 @@ void pack(int descr, char* name)
 	long int i;
 	struct stat temp;
 	
-	printf("pack file descr %d\n", descr);
+	printf("pack file name %s\n", name);
 	lseek(descr, 0, 0);
 	shortname = strrchr(name, '/');
 	if (shortname==NULL) shortname = name;		//если файл в одной директории с программой
 	i=strlen(shortname)+1;		//чтобы записать с завершающим нулем
-	write(temparch,&i,4);	
-	write(temparch, shortname, i);	//потом по последнему байту будем отличать, имя это файла или директории
+	write(temparch, shortname, i);	
+	write(temparch, "\0",1);	//потом по этому байту будем отличать, имя это файла или директории
 	fstat(descr, &temp);
-	write(temparch,&(temp.st_size),4);	//запишем размер файла
+	write(temparch,&(temp.st_size),8);	//запишем размер файла
 	for(;i = read(descr,file,1024);)		// и порциями сам файл
 	{
 		write(temparch,file,i);
@@ -74,9 +57,9 @@ void packdir(char* path)
 	
 	name = strrchr(path, '/'); //и начало последней части пути - имя директории, в которой находимся
 	if (name == NULL) name = path;
+	else name++;
 	namelen = len + 1 - (name - path);
-	write(temparch, &namelen, 4);
-	write(temparch, name, namelen - 1);	//записываем имя
+	write(temparch, name, namelen);	//записываем имя
 	write(temparch, "{", 1); //указывает, что сейчас будет содержимое директории
 	strcpy(temppath,path);
 	temppath[len] = '/';
@@ -86,10 +69,14 @@ void packdir(char* path)
 	{
 		if(temp->d_name[0] != '.')
 		{
-			write(temparch,"\0",1);		//с 0 начинается каждый файл в директории
+			
 			strcat(temppath,temp->d_name);
-			if (!whatisthis(temppath)) pack(open(temppath, O_RDONLY), temp->d_name); 
-			else packdir(temppath);
+			if (strcmp(temparchivepath,temppath))
+			{
+				write(temparch,"\0",1);		//с 0 начинается каждый файл в директории
+				if (!whatisthis(temppath)) pack(open(temppath, O_RDONLY), temp->d_name); 
+				else packdir(temppath);
+			}
 		}
 		temp = readdir(dir);	//открываем новый файл
 		temppath[len] = 0;	//отрезаем имя
@@ -104,7 +91,7 @@ void unpackfile(char* path, int f)
 	long int i, len, descr;
 	
 	descr = open(path, O_CREAT|O_WRONLY|O_TRUNC, S_IWUSR|S_IRUSR|S_IWGRP|S_IRGRP|S_IROTH);
-	read(f, &len, 4);
+	read(f, &len, 8);
 	for(;len > 0;)
 	{
 		i = len -= 1024;
@@ -116,68 +103,74 @@ void unpackfile(char* path, int f)
 	close(descr);
 }
 
-void unpack(char* path, int f);
+void unpack(int f, char* path);
+int unpackunit(int f, char* path);
 
 void unpackdir(char* path, int f)
 {
 	char check;
 	
-	mkdir(path,  O_CREAT|O_WRONLY|O_TRUNC, S_IWUSR|S_IRUSR|S_IWGRP|S_IRGRP|S_IROTH);
+	mkdir(path, S_IWUSR|S_IRUSR|S_IXUSR|S_IWGRP|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
 	read(f, &check, 1);
-	for(;!check;)	unpack(path, f);
+	for(;!check;read(f, &check, 1))	unpackunit(f, path);
 }
 
-void unpack(char* path, int f)
+int unpackunit(int f, char* path)
 {
 	char temppath[256];
-	int lenname, len;
-	
-	while(!eof(f))
+	int check, len;
+	len = strlen(path);
+	strcpy (temppath, path);
+	temppath[len] = '/';
+	len++;
+	check = read (f, temppath + len, 1);
+	if (check<=0) return check;
+	for(;temppath[len];)
 	{
-		read(f, &lenname, 4);
-		len = strlen(path);
-		strcpy (temppath, path);
-		read (f, temppath + len, lenname);
-		len+=lenname;
-		if(temppath[len] == '{') 
-		{
-			temppath[len] = 0;
-			unpackdir(temppath, f);
-		}
-		else unpackfile(temppath, f);
+		len++;
+		read (f, temppath + len, 1);
 	}
+	read (f, temppath + len, 1);
+	if(temppath[len] == '{') 
+	{
+		temppath[len] = 0;
+		unpackdir(temppath, f);
+	}
+	else unpackfile(temppath, f);
+	return 1;
 }
 
-int createarchive(char* path, char* name)
+void unpack(int f, char* path) {for(;unpackunit(f, path)>0;);}
+
+int createarchive(int* archivecounter, char* path, char* name)
 {	
-	char fullpath[256];
-	fullpath[0] = 0;
+	temparchivepath[0] = 0;
 	if(path[0])
 	{
-		strcpy(fullpath, path);
-		strcat(fullpath, "/");
+		strcpy(temparchivepath, path);
+		strcat(temparchivepath, "/");
 	}
 	if (!name[0])
 	{
 		name[0] = 'a';
-		name[1] = 48 + archivecounter;
+		name[1] = 48 + *archivecounter;
 		name[2] = 0;	
 	}
 	strcat(name, ".daf");
-	strncat(fullpath, name, 255 - strlen(fullpath));
-	temparch = open(fullpath, O_CREAT|O_WRONLY|O_TRUNC, S_IWUSR|S_IRUSR|S_IWGRP|S_IRGRP|S_IROTH);
-	printf("temparchivepath %s\n", fullpath);		
-	archivecounter++;
+	strncat(temparchivepath, name, 255 - strlen(temparchivepath));
+	temparch = open(temparchivepath, O_CREAT|O_WRONLY|O_TRUNC, S_IWUSR|S_IRUSR|S_IWGRP|S_IRGRP|S_IROTH);
+	(*archivecounter)++;
 	write(temparch, "ARCHIVE", 7);
 }
 
 int main(int argc, char *argv[])
 {
-	int i = 1, flag, tempf;
+	int i = 1, flag, tempf, archivecounter;
 	char tempname[256];
 	char path[256];
 	char try[256];
 	char check[7];
+	char cwd[256];
 	
 	tempname[0] = 0;
 	path[0] = 0;
@@ -211,7 +204,7 @@ int main(int argc, char *argv[])
 						strcpy(path, argv[i+1]);
 						break;
 					case 2:													//если непонятно, что, проверяем полный путь	
-						switch (tryfullpath(argv[i+1],try))
+						switch (tryfullpath(cwd,argv[i+1],try))
 						{
 							case 0:
 								printf("Error, the path to the file was entered, the default path will be used\n");
@@ -254,7 +247,7 @@ int main(int argc, char *argv[])
 			switch (flag)
 			{
 				case 2:
-					flag = tryfullpath(argv[i],try);
+					flag = tryfullpath(cwd,argv[i],try);
 					switch (flag)
 					{
 						case 2:
@@ -269,7 +262,7 @@ int main(int argc, char *argv[])
 								break;
 							}
 						case 1:
-							if (!temparch) 	createarchive(path, tempname); //создать файл для архивирования, если не создан
+							if (!temparch) 	createarchive(&archivecounter, path, tempname); //создать файл для архивирования, если не создан
 							if (!flag) 
 							{
 								pack(tempf, argv[i]);
@@ -287,7 +280,7 @@ int main(int argc, char *argv[])
 						break;
 					}
 				case 1: 
-					if (!temparch) 	createarchive(path, tempname); //создать файл для архивирования, если не создан
+					if (!temparch) 	createarchive(&archivecounter, path, tempname); //создать файл для архивирования, если не создан
 					if (!flag) 
 					{
 						pack(tempf,argv[i]);
