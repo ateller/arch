@@ -53,7 +53,6 @@ void pack(int descr, char *name)
 }
 void packdir(char *path)
 {
-	printf("pack way %s\n", path);
 	DIR *dir = opendir(path);
 	struct dirent *temp = readdir(dir); //первый файл в дир.
 	char temppath[256], *name;
@@ -89,12 +88,16 @@ void packdir(char *path)
 	closedir(dir);
 }
 
-void unpackfile(char *path, int f)
+int unpackfile(char *path, int f)
 {
 	char file[1024];
 	long int templen, len, descr;
 
 	descr = open(path, O_CREAT|O_WRONLY|O_TRUNC, 0664); //откроем файл
+	if (descr == -1) {
+		perror(path);
+		return descr;
+	}
 	read(f, &len, 8);	//читаем длину
 	for (; len > 0;) { //переписываем
 		templen = len -= 1024;
@@ -106,18 +109,24 @@ void unpackfile(char *path, int f)
 		write(descr, file, templen);
 	}
 	close(descr);
+	return 0;
 }
 
 int unpackunit(int f, char *path);
 
-void unpackdir(char *path, int f)
+int unpackdir(char *path, int f)
 {
 	char check;
 
-	mkdir(path, 0775); //создаем директорию
+	check = mkdir(path, 0775); //создаем директорию
+	if (check) {
+		perror(path);
+		return check;
+	}
 	read(f, &check, 1); //есть ли содержимое еще
 	for (; !check; read(f, &check, 1))
 		unpackunit(f, path); //следующая часть
+	return 0;
 }
 
 int unpackunit(int f, char *path)
@@ -142,7 +151,7 @@ int unpackunit(int f, char *path)
 		unpackdir(temppath, f);
 	} else
 		unpackfile(temppath, f);
-	return 1;
+	return 0;
 }
 
 void unpack(int f, char *path)
@@ -164,8 +173,13 @@ int createarchive(int *archivecounter, char *path, char *name)
 	strcat(name, ".daf"); //dream archive file
 	strncat(temparchivepath, name, 255 - strlen(temparchivepath));
 	temparch = open(temparchivepath, O_CREAT|O_WRONLY|O_TRUNC, 0664);
+	if (temparch == -1) {
+		perror(temparchivepath);
+		return temparch;
+	}
 	(*archivecounter)++;
 	write(temparch, "ARCHIVE", 7); //чтобы отличать
+	return 0;
 }
 
 int main(int argc, char *argv[])
@@ -178,11 +192,14 @@ int main(int argc, char *argv[])
 	path[0] = 0;
 	getcwd(cwd, 255);
 
-	printf("%s %d\n", cwd, argc);
+	if (argc == 1) {
+		printf("No arguments entered. There is nothing to do\n");
+		exit(0);
+	}
 	for (; i < argc; i++) {
-		printf("%d %s %s\n", i, argv[i], argv[i+1]);
 		if (!strcmp("-p", argv[i])) { //флаг пути
 			if (temparch) {	//закрыть старый архив
+				printf("Archive %s is created\n", tempname);
 				close(temparch);
 				temparch = 0;
 				tempname[0] = 0;
@@ -257,14 +274,23 @@ int main(int argc, char *argv[])
 					}
 				case 1:
 					if (!temparch)
-						createarchive(&archivecounter, path, tempname);
-						//создать архив
-					if (!flag) {
-						pack(tempf, argv[i]);
+						if (createarchive(&archivecounter, path, tempname) == -1) {
+						//создать архив и проверить
+							for (; i < (argc - 1); i++)
+								if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1])) {
+									flag = 2;
+									break;
+								}
+							if (i == (argc - 1))
+								flag == 2;
+						}
+					if (flag == 0) {
+						pack(tempf, try);
 						break;
 					}
-					packdir(try);
-				}
+					if (flag == 1)
+						packdir(try);
+					}
 				break;
 			case 0:
 				tempf = open(argv[i], O_RDONLY);
@@ -277,17 +303,29 @@ int main(int argc, char *argv[])
 				}
 			case 1:
 				if (!temparch)
-					createarchive(&archivecounter, path, tempname);
-					//создать новый архив
-				if (!flag)
+						if (createarchive(&archivecounter, path, tempname) == -1) {
+						//создать архив и проверить
+							for (; i < (argc - 1); i++)
+								if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1])) {
+									flag = 2;
+									break;
+								}
+							if (i == (argc - 1))
+								flag == 2;
+						}
+				if (flag == 0) {
 					pack(tempf, argv[i]);
-				else
+					break;
+				}
+				if (flag == 1)
 					packdir(argv[i]);
 			}
 		}
 	}
-	if (temparch)
+	if (temparch > 0) {
+		printf("Archive %s is created\n", tempname);
 		close(temparch);
+	}
 	exit(0);
 }
 
