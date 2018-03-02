@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 int temparch;
 char temparchivepath[256];
@@ -15,7 +16,7 @@ int whatisthis(char *path)
 	struct stat temp;
 
 	if (stat(path, &temp) == -1)
-		return 2;	//хз что
+		return 2;	//неизвестно что
 	if (S_ISDIR(temp.st_mode))
 		return 1;	//директория
 	if (S_ISREG(temp.st_mode))
@@ -51,13 +52,19 @@ void pack(int descr, char *name)
 	}
 	close(descr);
 }
-void packdir(char *path)
+int packdir(char *path)
 {
-	DIR *dir = opendir(path);
-	struct dirent *temp = readdir(dir); //первый файл в дир.
+	DIR *dir;
+	struct dirent *temp;
 	char temppath[256], *name;
 	long int len = strlen(path), namelen;	//длина пути
 
+	dir = opendir(path);
+	if (dir == NULL) {
+		perror(path);
+		return -1;
+	}
+	temp = readdir(dir); //первый файл в дир.
 	name = strrchr(path, '/'); //узнаем имя каталога
 	if (name == NULL)
 		name = path;
@@ -71,14 +78,23 @@ void packdir(char *path)
 	len++;
 	temppath[len] = 0;
 	for (; temp != NULL;) {
-		if (temp->d_name[0] != '.') {
+		if ((temp->d_name[0] != '.') || ((temp->d_name[1] != '.') && (temp->d_name[1] != 0))) {
 			strcat(temppath, temp->d_name);//приклеим имя
 			if (strcmp(temparchivepath, temppath)) {
-				write(temparch, "\0", 1); //0 - не конец
-				if (!whatisthis(temppath))
-					pack(open(temppath, O_RDONLY), temp->d_name);
-				else
-					packdir(temppath);
+				if (!whatisthis(temppath)) {
+					namelen = open(temppath, O_RDONLY);
+					if (namelen == -1)
+						perror(temppath);
+					else {
+						write(temparch, "\0", 1); //0 - не конец
+						pack(namelen, temp->d_name);
+					}
+				} else {
+					write(temparch, "\0", 1); //0 - не конец
+					namelen = packdir(temppath);
+					if (namelen == -1)
+						lseek(temparch, -1, 1);
+				}
 			}
 		}
 		temp = readdir(dir);	//следующий файл
@@ -86,6 +102,7 @@ void packdir(char *path)
 	}
 	write(temparch, "}", 1); //дир. закончилась
 	closedir(dir);
+	return 0;
 }
 
 int unpackfile(char *path, int f)
@@ -120,8 +137,10 @@ int unpackdir(char *path, int f)
 
 	check = mkdir(path, 0775); //создаем директорию
 	if (check) {
-		perror(path);
-		return check;
+		if (errno != 17) {
+			perror(path);
+			return check;
+		}
 	}
 	read(f, &check, 1); //есть ли содержимое еще
 	for (; !check; read(f, &check, 1))
@@ -265,11 +284,16 @@ int main(int argc, char *argv[])
 					break;
 				case 0:
 					tempf = open(try, O_RDONLY);
-					read(tempf, check, 7);
-					if (!strncmp("ARCHIVE", check, 7)) {
-					//на входе архив
-						unpack(tempf, path);
-						//распаковать
+					if (tempf != -1) {
+						read(tempf, check, 7);
+						if (!strncmp("ARCHIVE", check, 7)) {
+						//на входе архив
+							unpack(tempf, path);
+							//распаковать
+							break;
+						}
+					} else {
+						perror(try);
 						break;
 					}
 				case 1:
@@ -293,26 +317,31 @@ int main(int argc, char *argv[])
 					}
 				break;
 			case 0:
-				tempf = open(argv[i], O_RDONLY);
-				read(tempf, check, 7);
-				if (!strncmp("ARCHIVE", check, 7)) {
-					//на входе архив
-					unpack(tempf, path);
-					//распаковать
-					break;
-				}
+					tempf = open(argv[i], O_RDONLY);
+					if (tempf != -1) {
+						read(tempf, check, 7);
+						if (!strncmp("ARCHIVE", check, 7)) {
+						//на входе архив
+							unpack(tempf, path);
+							//распаковать
+							break;
+						}
+					} else {
+						perror(argv[i]);
+						break;
+					}
 			case 1:
 				if (!temparch)
-						if (createarchive(&archivecounter, path, tempname) == -1) {
-						//создать архив и проверить
-							for (; i < (argc - 1); i++)
-								if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1])) {
-									flag = 2;
-									break;
-								}
-							if (i == (argc - 1))
-								flag == 2;
-						}
+					if (createarchive(&archivecounter, path, tempname) == -1) {
+					//создать архив и проверить
+						for (; i < (argc - 1); i++)
+							if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1])) {
+								flag = 2;
+								break;
+							}
+						if (i == (argc - 1))
+							flag == 2;
+					}
 				if (flag == 0) {
 					pack(tempf, argv[i]);
 					break;
