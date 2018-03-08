@@ -8,8 +8,16 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+#define PORTION_SIZE 1024
+#define PATH_SIZE 256
+#define RET_IF_ERROR(check, error,info, value)\
+	if (check == error) {\
+		perror(info);\
+		return value;\
+	}
+
 int temparch;
-char temparchivepath[256];
+char temparchivepath[PATH_SIZE];
 
 int whatisthis(char *path)
 {
@@ -28,13 +36,13 @@ int tryfullpath(char *cwd, char *path, char *full)
 	strcpy(full, cwd);
 	if (path[0] != '/')
 		strcat(full, "/");
-	strncat(full, path, 255-strlen(cwd));
+	strncat(full, path, PATH_SIZE-1-strlen(cwd));
 	return whatisthis(full);
 }
 
 void pack(int descr, char *name)
 {
-	char file[1024], *shortname;
+	char file[PORTION_SIZE], *shortname;
 	long int i;
 	struct stat temp;
 
@@ -47,7 +55,7 @@ void pack(int descr, char *name)
 	write(temparch, "\0", 1); //0 - файл, { - каталог
 	fstat(descr, &temp);
 	write(temparch, &(temp.st_size), 8); //размер файла
-	for (; i = read(descr, file, 1024);) {	//сам файл
+	for (; i = read(descr, file, PORTION_SIZE);) {	//сам файл
 		write(temparch, file, i);
 	}
 	close(descr);
@@ -56,14 +64,11 @@ int packdir(char *path)
 {
 	DIR *dir;
 	struct dirent *temp;
-	char temppath[256], *name;
+	char temppath[PATH_SIZE], *name;
 	long int len = strlen(path), namelen;	//длина пути
 
 	dir = opendir(path);
-	if (dir == NULL) {
-		perror(path);
-		return -1;
-	}
+	RET_IF_ERROR(dir, NULL, path, -1);
 	temp = readdir(dir); //первый файл в дир.
 	name = strrchr(path, '/'); //узнаем имя каталога
 	if (name == NULL)
@@ -107,21 +112,18 @@ int packdir(char *path)
 
 int unpackfile(char *path, int f)
 {
-	char file[1024];
+	char file[PORTION_SIZE];
 	long int templen, len, descr;
 
 	descr = open(path, O_CREAT|O_WRONLY|O_TRUNC, 0664); //откроем файл
-	if (descr == -1) {
-		perror(path);
-		return descr;
-	}
+	RET_IF_ERROR(descr, -1, path, -1);
 	read(f, &len, 8);	//читаем длину
 	for (; len > 0;) { //переписываем
-		templen = len -= 1024;
+		templen = len -= PORTION_SIZE;
 		if (templen > 0)
-			templen = 1024;
+			templen = PORTION_SIZE;
 		else
-			templen += 1024;
+			templen += PORTION_SIZE;
 		read(f, file, templen);
 		write(descr, file, templen);
 	}
@@ -137,7 +139,7 @@ int unpackdir(char *path, int f)
 
 	check = mkdir(path, 0775); //создаем директорию
 	if (check) {
-		if (errno != 17) {
+		if (errno != EEXIST) {
 			perror(path);
 			return check;
 		}
@@ -150,13 +152,15 @@ int unpackdir(char *path, int f)
 
 int unpackunit(int f, char *path)
 {
-	char temppath[256];
+	char temppath[PATH_SIZE];
 	int check, len;
 
 	len = strlen(path); //длина
 	strcpy(temppath, path);
-	temppath[len] = '/';
+	if (len) {
+		temppath[len] = '/';
 	len++;
+	}
 	check = read(f, temppath + len, 1);
 	if (check <= 0) //проверка конца файла
 		return check;
@@ -186,16 +190,13 @@ int createarchive(int *archivecounter, char *path, char *name)
 	}
 	if (!name[0]) { //имя по умолчанию
 		name[0] = 'a';
-		name[1] = 48 + *archivecounter;
+		name[1] = '0' + *archivecounter;
 		name[2] = 0;
 	}
 	strcat(name, ".daf"); //dream archive file
-	strncat(temparchivepath, name, 255 - strlen(temparchivepath));
+	strncat(temparchivepath, name, PATH_SIZE - 1 - strlen(temparchivepath));
 	temparch = open(temparchivepath, O_CREAT|O_WRONLY|O_TRUNC, 0664);
-	if (temparch == -1) {
-		perror(temparchivepath);
-		return temparch;
-	}
+	RET_IF_ERROR(temparch, -1, temparchivepath, -1);
 	(*archivecounter)++;
 	write(temparch, "ARCHIVE", 7); //чтобы отличать
 	return 0;
@@ -204,12 +205,13 @@ int createarchive(int *archivecounter, char *path, char *name)
 int main(int argc, char *argv[])
 {
 	int i = 1, flag, tempf, archivecounter = 0;
-	char tempname[256], path[256], try[256], check[7], cwd[256];
+	char tempname[PATH_SIZE], path[PATH_SIZE], try[PATH_SIZE];
+	char check[7], cwd[PATH_SIZE];
 
 	tempname[0] = 0;
 	temparch = 0;
 	path[0] = 0;
-	getcwd(cwd, 255);
+	getcwd(cwd, PATH_SIZE - 1);
 
 	if (argc == 1) {
 		printf("No arguments entered. There is nothing to do\n");
@@ -270,7 +272,7 @@ int main(int argc, char *argv[])
 			else if (strchr(argv[i+1], '/'))
 				printf("The file name can not contain /\n");
 			else {
-				strncpy(tempname, argv[i+1], 255);
+				strncpy(tempname, argv[i+1], PATH_SIZE - 1);
 				i++;
 			}
 		} else {
