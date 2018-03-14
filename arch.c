@@ -20,6 +20,9 @@
 		} \
 	} while (0)
 #endif
+#ifndef IS_ARCH_FLAG
+#define IS_ARCH_FLAG(str) (!strcmp("-p", str) || !strcmp("-n", str))
+#endif
 
 int temparch;
 char temparchivepath[PATH_SIZE], cwd[PATH_SIZE];
@@ -93,7 +96,7 @@ int packdir(char *path)
 	len++;
 	temppath[len] = 0;
 	for (; temp != NULL;) {
-		if ((temp->d_name[0] != '.') || ((temp->d_name[1] != '.') && (temp->d_name[1] != 0))) {
+		if (strcmp(temp->d_name, ".") && strcmp(temp->d_name, "..")) {
 			strcat(temppath, temp->d_name);//приклеим имя
 			if (strcmp(temparchivepath, temppath)) {
 				if (!whatisthis(temppath, NULL)) {
@@ -101,11 +104,11 @@ int packdir(char *path)
 					if (namelen == -1)
 						perror(temppath);
 					else {
-						write(temparch, "\0", 1); //0 - не конец
+						write(temparch, "\0", 1);
 						pack(namelen, temp->d_name);
 					}
 				} else {
-					write(temparch, "\0", 1); //0 - не конец
+					write(temparch, "\0", 1);
 					namelen = packdir(temppath);
 					if (namelen == -1)
 						lseek(temparch, -1, 1);
@@ -125,7 +128,7 @@ int unpackfile(char *path, int f)
 	char file[PORTION_SIZE];
 	long int templen, len, descr;
 
-	descr = open(path, O_CREAT|O_WRONLY|O_TRUNC, 0664); //откроем файл
+	descr = open(path, O_CREAT|O_WRONLY|O_TRUNC, 0664);
 	if (descr == -1) {
 		perror(path);
 		return descr;
@@ -194,7 +197,7 @@ void unpack(int f, char *path)
 { for (; unpackunit(f, path) > 0;);
 }
 
-int createarchive(int *archivecounter, char *path, char *name)
+int create(int *num, char *path, char *name)
 {
 	temparchivepath[0] = 0;
 	if (path[0]) { //начинаем собирать путь
@@ -203,7 +206,7 @@ int createarchive(int *archivecounter, char *path, char *name)
 	}
 	if (!name[0]) { //имя по умолчанию
 		name[0] = 'a';
-		name[1] = '0' + *archivecounter;
+		name[1] = '0' + *num;
 		name[2] = 0;
 	}
 	strcat(name, ".daf"); //dream archive file
@@ -213,7 +216,7 @@ int createarchive(int *archivecounter, char *path, char *name)
 		perror(temparchivepath);
 		return -1;
 	}
-	(*archivecounter)++;
+	(*num)++;
 	write(temparch, "ARCHIVE", 7); //чтобы отличать
 	return 0;
 }
@@ -230,11 +233,14 @@ void tonextflag(int *j, char **argv, int argc)
 
 int main(int argc, char *argv[])
 {
-	int i = 1, flag, tempf, archivecounter = 0;
-	char tempname[PATH_SIZE], path[PATH_SIZE], full[PATH_SIZE];
+	int i = 1, flag, tempf, num = 0;
+	char name[PATH_SIZE], path[PATH_SIZE], full[PATH_SIZE];
 	char check[7];
+	char *twoflagserr = "Warning, two flags are entered one after another";
+	char *patherr = "Warning, the path to the file was entered";
+	char *bad = "Warning, something bad was entered";
 
-	tempname[0] = 0;
+	name[0] = 0;
 	temparch = 0;
 	path[0] = 0;
 	getcwd(cwd, PATH_SIZE - 1);
@@ -246,29 +252,29 @@ int main(int argc, char *argv[])
 	for (; i < argc; i++) {
 		if (!strcmp("-p", argv[i])) { //флаг пути
 			if (temparch) {	//закрыть старый архив
-				printf("Archive %s is created\n", tempname);
+				printf("Archive %s is created\n", name);
 				close(temparch);
 				temparch = 0;
-				tempname[0] = 0;
+				name[0] = 0;
 				path[0] = 0;
 			}
 			if (i == (argc-1))
 				printf("Warning, the last argument is flag\n");
 			else
-				if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1]))
-					printf("Warning, two flags are entered one after another\n");
+				if (IS_ARCH_FLAG(argv[i+1]))
+					printf("%s\n", twoflagserr);
 			else {
 				switch (whatisthis(argv[i+1], full)) {
 				//что после флага
 				case 0: //если файл
-					printf("Error, the path to the file was entered, the default path will be used\n");
+					printf("%s\n", patherr);
 					i--;
 					break;
 				case 1: //если каталог
 					strcpy(path, full);
 					break;
 				case 2://проверим полный путь
-					printf("Error, something bad was entered, the default path will be used\n");
+					printf("%s\n", bad);
 					break;
 				}
 				i++;
@@ -277,24 +283,24 @@ int main(int argc, char *argv[])
 			if (temparch) { //закрыть старый архив
 				close(temparch);
 				temparch = 0;
-				tempname[0] = 0;
+				name[0] = 0;
 				path[0] = 0;
 			}
 			if (i == (argc-1))
 				printf("Warning, the last argument is flag\n");
-			else if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1]))
-				printf("Warning, two flags are entered one after another\n");
+			else if (IS_ARCH_FLAG(argv[i+1]))
+				printf("%s\n", twoflagserr);
 			else if (strchr(argv[i+1], '/'))
 				printf("The file name can not contain /\n");
 			else {
-				strncpy(tempname, argv[i+1], PATH_SIZE - 1);
+				strncpy(name, argv[i+1], PATH_SIZE - 1);
 				i++;
 			}
 		} else {
 			flag = whatisthis(argv[i], full);
 			switch (flag) {
 			case 2:
-				printf("Error, something bad was entered, the default path will be used\n");
+				printf("%s\n", bad);
 				break;
 			case 0:
 				tempf = open(full, O_RDONLY);
@@ -312,8 +318,7 @@ int main(int argc, char *argv[])
 				}
 			case 1:
 				if (!temparch)
-					if (createarchive(&archivecounter, path, tempname) == -1) {
-					//создать архив и проверить
+					if (create(&num, path, name) == -1) {
 						tonextflag(&i, argv, argc);
 							flag = 2;
 					}
@@ -327,7 +332,7 @@ int main(int argc, char *argv[])
 		}
 	}
 	if (temparch > 0) {
-		printf("Archive %s is created\n", tempname);
+		printf("Archive %s is created\n", name);
 		close(temparch);
 	}
 	exit(0);
