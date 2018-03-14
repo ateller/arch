@@ -21,29 +21,30 @@
 	} while (0)
 #endif
 
-
 int temparch;
-char temparchivepath[PATH_SIZE];
+char temparchivepath[PATH_SIZE], cwd[PATH_SIZE];
 
-int whatisthis(char *path)
+int whatisthis(char *path, char *full)
 {
 	struct stat temp;
 
-	if (stat(path, &temp) == -1)
-		return 2;	//неизвестно что
+	if (stat(path, &temp) == -1) {
+		if (full == NULL)
+			return 2;
+		strcpy(full, cwd);
+		if (path[0] != '/')
+			strcat(full, "/");
+		strncat(full, path, PATH_SIZE-1-strlen(cwd));
+		if (stat(full, &temp) == -1)
+			return 2;	//неизвестно что
+	} else
+		if (full != NULL)
+			strcpy(full, path);
 	if (S_ISDIR(temp.st_mode))
 		return 1;	//директория
 	if (S_ISREG(temp.st_mode))
 		return 0;	//файл
-}
-
-int tryfullpath(char *cwd, char *path, char *full)
-{
-	strcpy(full, cwd);
-	if (path[0] != '/')
-		strcat(full, "/");
-	strncat(full, path, PATH_SIZE-1-strlen(cwd));
-	return whatisthis(full);
+	return 2;
 }
 
 void pack(int descr, char *name)
@@ -95,7 +96,7 @@ int packdir(char *path)
 		if ((temp->d_name[0] != '.') || ((temp->d_name[1] != '.') && (temp->d_name[1] != 0))) {
 			strcat(temppath, temp->d_name);//приклеим имя
 			if (strcmp(temparchivepath, temppath)) {
-				if (!whatisthis(temppath)) {
+				if (!whatisthis(temppath, NULL)) {
 					namelen = open(temppath, O_RDONLY);
 					if (namelen == -1)
 						perror(temppath);
@@ -217,11 +218,21 @@ int createarchive(int *archivecounter, char *path, char *name)
 	return 0;
 }
 
+void tonextflag(int *j, char **argv, int argc)
+{
+	int i;
+
+	for (; i < (argc - 1); i++)
+		if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1]))
+			break;
+	*j = i;
+}
+
 int main(int argc, char *argv[])
 {
 	int i = 1, flag, tempf, archivecounter = 0;
-	char tempname[PATH_SIZE], path[PATH_SIZE], try[PATH_SIZE];
-	char check[7], cwd[PATH_SIZE];
+	char tempname[PATH_SIZE], path[PATH_SIZE], full[PATH_SIZE];
+	char check[7];
 
 	tempname[0] = 0;
 	temparch = 0;
@@ -247,28 +258,17 @@ int main(int argc, char *argv[])
 				if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1]))
 					printf("Warning, two flags are entered one after another\n");
 			else {
-				switch (whatisthis(argv[i+1])) {
+				switch (whatisthis(argv[i+1], full)) {
 				//что после флага
 				case 0: //если файл
 					printf("Error, the path to the file was entered, the default path will be used\n");
 					i--;
 					break;
 				case 1: //если каталог
-					strcpy(path, argv[i+1]);
+					strcpy(path, full);
 					break;
 				case 2://проверим полный путь
-					switch (tryfullpath(cwd, argv[i+1], try)) {
-					case 0:
-						printf("Error, the path to the file was entered, the default path will be used\n");
-						i--;
-						break;
-					case 1:
-						strcpy(path, try);
-						break;
-					case 2:
-						printf("Error, something bad was entered, the default path will be used\n"); //точно плохой ввод
-						break;
-					}
+					printf("Error, something bad was entered, the default path will be used\n");
 					break;
 				}
 				i++;
@@ -291,80 +291,38 @@ int main(int argc, char *argv[])
 				i++;
 			}
 		} else {
-			flag = whatisthis(argv[i]);
+			flag = whatisthis(argv[i], full);
 			switch (flag) {
 			case 2:
-				flag = tryfullpath(cwd, argv[i], try);
-				switch (flag) {
-				case 2:
-					printf("Error, something bad was entered, the default path will be used\n");
-					break;
-				case 0:
-					tempf = open(try, O_RDONLY);
-					if (tempf != -1) {
-						read(tempf, check, 7);
-						if (!strncmp("ARCHIVE", check, 7)) {
-						//на входе архив
-							unpack(tempf, path);
-							//распаковать
-							break;
-						}
-					} else {
-						perror(try);
-						break;
-					}
-				case 1:
-					if (!temparch)
-						if (createarchive(&archivecounter, path, tempname) == -1) {
-						//создать архив и проверить
-							for (; i < (argc - 1); i++)
-								if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1])) {
-									flag = 2;
-									break;
-								}
-							if (i == (argc - 1))
-								flag == 2;
-						}
-					if (flag == 0) {
-						pack(tempf, try);
-						break;
-					}
-					if (flag == 1)
-						packdir(try);
-					}
+				printf("Error, something bad was entered, the default path will be used\n");
 				break;
 			case 0:
-					tempf = open(argv[i], O_RDONLY);
-					if (tempf != -1) {
-						read(tempf, check, 7);
-						if (!strncmp("ARCHIVE", check, 7)) {
-						//на входе архив
-							unpack(tempf, path);
-							//распаковать
-							break;
-						}
-					} else {
-						perror(argv[i]);
+				tempf = open(full, O_RDONLY);
+				if (tempf != -1) {
+					read(tempf, check, 7);
+					if (!strncmp("ARCHIVE", check, 7)) {
+					//на входе архив
+						unpack(tempf, path);
+						//распаковать
 						break;
 					}
+				} else {
+					perror(full);
+					break;
+				}
 			case 1:
 				if (!temparch)
 					if (createarchive(&archivecounter, path, tempname) == -1) {
 					//создать архив и проверить
-						for (; i < (argc - 1); i++)
-							if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1])) {
-								flag = 2;
-								break;
-							}
-						if (i == (argc - 1))
-							flag == 2;
+						tonextflag(&i, argv, argc);
+							flag = 2;
 					}
 				if (flag == 0) {
-					pack(tempf, argv[i]);
+					pack(tempf, full);
 					break;
 				}
 				if (flag == 1)
-					packdir(argv[i]);
+					packdir(full);
 			}
 		}
 	}
