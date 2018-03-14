@@ -10,11 +10,17 @@
 
 #define PORTION_SIZE 1024
 #define PATH_SIZE 256
-#define RET_IF_ERROR(check, error,info, value)\
-	if (check == error) {\
-		perror(info);\
-		return value;\
-	}
+
+#ifndef EXIT_IF_ERROR
+#define EXIT_IF_ERROR(check, error, info)\
+	do { \
+		if (check == error) { \
+			perror(info);\
+			exit(errno);\
+		} \
+	} while (0)
+#endif
+
 
 int temparch;
 char temparchivepath[PATH_SIZE];
@@ -68,7 +74,10 @@ int packdir(char *path)
 	long int len = strlen(path), namelen;	//длина пути
 
 	dir = opendir(path);
-	RET_IF_ERROR(dir, NULL, path, -1);
+	if (dir == NULL) {
+		perror(path);
+		return -1;
+	}
 	temp = readdir(dir); //первый файл в дир.
 	name = strrchr(path, '/'); //узнаем имя каталога
 	if (name == NULL)
@@ -116,7 +125,10 @@ int unpackfile(char *path, int f)
 	long int templen, len, descr;
 
 	descr = open(path, O_CREAT|O_WRONLY|O_TRUNC, 0664); //откроем файл
-	RET_IF_ERROR(descr, -1, path, -1);
+	if (descr == -1) {
+		perror(path);
+		return descr;
+	}
 	read(f, &len, 8);	//читаем длину
 	for (; len > 0;) { //переписываем
 		templen = len -= PORTION_SIZE;
@@ -196,7 +208,10 @@ int createarchive(int *archivecounter, char *path, char *name)
 	strcat(name, ".daf"); //dream archive file
 	strncat(temparchivepath, name, PATH_SIZE - 1 - strlen(temparchivepath));
 	temparch = open(temparchivepath, O_CREAT|O_WRONLY|O_TRUNC, 0664);
-	RET_IF_ERROR(temparch, -1, temparchivepath, -1);
+	if (temparch == -1) {
+		perror(temparchivepath);
+		return -1;
+	}
 	(*archivecounter)++;
 	write(temparch, "ARCHIVE", 7); //чтобы отличать
 	return 0;
