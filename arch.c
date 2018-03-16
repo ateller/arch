@@ -9,10 +9,11 @@
 #include <errno.h>
 
 #define PORTION_SIZE 1024
-#define PATH_SIZE 256
+#define PATH_SIZE 512
+#define NAME_SIZE 256
 
-#ifndef EXIT_IF_ERROR
-#define EXIT_IF_ERROR(check, error, info)\
+#ifndef IF_ERR
+#define IF_ERR(check, error, info)\
 	do { \
 		if (check == error) { \
 			perror(info);\
@@ -24,8 +25,8 @@
 #define IS_ARCH_FLAG(str) (!strcmp("-p", str) || !strcmp("-n", str))
 #endif
 
-int temparch;
-char temparchivepath[PATH_SIZE], cwd[PATH_SIZE];
+int temp_ar;
+char archpath[PATH_SIZE], cwd[PATH_SIZE];
 
 int whatisthis(char *path, char *full)
 {
@@ -56,25 +57,66 @@ void pack(int descr, char *name)
 	long int i;
 	struct stat temp;
 
-	lseek(descr, 0, 0);
+	IF_ERR(lseek(descr, 0, 0), -1, name);
 	shortname = strrchr(name, '/');
 	if (shortname == NULL)
 		shortname = name; //путь из раб. каталога
 	i = strlen(shortname) + 1;	//записать с нулем
-	write(temparch, shortname, i);
-	write(temparch, "\0", 1); //0 - файл, { - каталог
-	fstat(descr, &temp);
-	write(temparch, &(temp.st_size), 8); //размер файла
-	for (; i = read(descr, file, PORTION_SIZE);) {	//сам файл
-		write(temparch, file, i);
+	IF_ERR(write(temp_ar, shortname, i), -1, name);
+	IF_ERR(write(temp_ar, "\0", 1), -1, name);
+	IF_ERR(fstat(descr, &temp), -1, name);
+	IF_ERR(write(temp_ar, &(temp.st_size), 8), -1, name);
+	for (; i = read(descr, file, PORTION_SIZE);) {	//файл
+		IF_ERR(i, -1, name);
+		IF_ERR(write(temp_ar, file, i), -1, name);
 	}
-	close(descr);
+	IF_ERR(close(descr), -1, name);
 }
+
+int filecmp(char *path1, char *path2)
+{
+	char buf[PATH_SIZE];
+	int len1, len2, check;
+
+	check = strcmp(path1, path2);
+	if (!check)
+		return check;
+	len1 = strlen(path1);
+	len2 = strlen(path2);
+	if (len1 == len2)
+		return 1;
+	check = readlink("/proc/self/exe", buf, PATH_SIZE - 1);
+	IF_ERR(check, -1, "/proc/self/exe");
+	buf[check] = 0;
+	check = 1 + strrchr(buf, '/') - buf;
+	buf[check] = 0;
+	if (len1 < len2) {
+		strncat(buf, path1, PATH_SIZE - check);
+		check = strcmp(path2, buf);
+	} else {
+		strncat(buf, path2, PATH_SIZE - check);
+		check = strcmp(path1, buf);
+	}
+	if (!check)
+		return check;
+	strcpy(buf, cwd);
+	if (len1 < len2) {
+		if (path1[0] != '/')
+			strcat(buf, "/");
+		check = strcmp(path2, strncat(buf, path1, PATH_SIZE - check));
+	} else {
+		if (path2[0] != '/')
+			strcat(buf, "/");
+		check = strcmp(path1, strncat(buf, path2, PATH_SIZE - check));
+	}
+	return check;
+}
+
 int packdir(char *path)
 {
 	DIR *dir;
 	struct dirent *temp;
-	char temppath[PATH_SIZE], *name;
+	char check, temppath[PATH_SIZE], *name;
 	long int len = strlen(path), namelen;	//длина пути
 
 	dir = opendir(path);
@@ -89,8 +131,8 @@ int packdir(char *path)
 	else
 		name++;
 	namelen = len + 1 - (name - path);
-	write(temparch, name, namelen);	//записываем имя
-	write(temparch, "{", 1); //0 - файл, { - каталог
+	IF_ERR(write(temp_ar, name, namelen), -1, path);
+	IF_ERR(write(temp_ar, "{", 1), -1, path);
 	strcpy(temppath, path);
 	temppath[len] = '/';
 	len++;
@@ -98,28 +140,32 @@ int packdir(char *path)
 	for (; temp != NULL;) {
 		if (strcmp(temp->d_name, ".") && strcmp(temp->d_name, "..")) {
 			strcat(temppath, temp->d_name);//приклеим имя
-			if (strcmp(temparchivepath, temppath)) {
-				if (!whatisthis(temppath, NULL)) {
+			if (!whatisthis(temppath, NULL)) {
+				if (filecmp(temppath, archpath)) {
 					namelen = open(temppath, O_RDONLY);
 					if (namelen == -1)
 						perror(temppath);
 					else {
-						write(temparch, "\0", 1);
+						check = write(temp_ar, "\0", 1);
+						IF_ERR(check, -1, archpath);
 						pack(namelen, temp->d_name);
 					}
-				} else {
-					write(temparch, "\0", 1);
-					namelen = packdir(temppath);
-					if (namelen == -1)
-						lseek(temparch, -1, 1);
+				}
+			} else {
+				check = write(temp_ar, "\0", 1);
+				IF_ERR(check, -1, archpath);
+				namelen = packdir(temppath);
+				if (namelen == -1) {
+					check = lseek(temp_ar, -1, 1);
+					IF_ERR(check, -1, archpath);
 				}
 			}
 		}
 		temp = readdir(dir);	//следующий файл
 		temppath[len] = 0;	//отрезаем имя
 	}
-	write(temparch, "}", 1); //дир. закончилась
-	closedir(dir);
+	IF_ERR(write(temp_ar, "}", 1), -1, archpath); //закончилась
+	IF_ERR(closedir(dir), -1, path);
 	return 0;
 }
 
@@ -133,17 +179,17 @@ int unpackfile(char *path, int f)
 		perror(path);
 		return descr;
 	}
-	read(f, &len, 8);	//читаем длину
+	IF_ERR(read(f, &len, 8), -1, path);//читаем длину
 	for (; len > 0;) { //переписываем
 		templen = len -= PORTION_SIZE;
 		if (templen > 0)
 			templen = PORTION_SIZE;
 		else
 			templen += PORTION_SIZE;
-		read(f, file, templen);
-		write(descr, file, templen);
+		IF_ERR(read(f, file, templen), -1, path);
+		IF_ERR(write(descr, file, templen), -1, path);
 	}
-	close(descr);
+	IF_ERR(close(descr), -1, path);
 	return 0;
 }
 
@@ -160,7 +206,7 @@ int unpackdir(char *path, int f)
 			return check;
 		}
 	}
-	read(f, &check, 1); //есть ли содержимое еще
+	IF_ERR(read(f, &check, 1), -1, path);//есть ли еще
 	for (; !check; read(f, &check, 1))
 		unpackunit(f, path); //следующая часть
 	return 0;
@@ -175,22 +221,23 @@ int unpackunit(int f, char *path)
 	strcpy(temppath, path);
 	if (len) {
 		temppath[len] = '/';
-	len++;
+		len++;
 	}
 	check = read(f, temppath + len, 1);
-	if (check <= 0) //проверка конца файла
+	IF_ERR(check, -1, path);
+	if (check == 0) //проверка конца файла
 		return check;
 	for (; temppath[len];) { //приклеим имя
 		len++;
-		read(f, temppath + len, 1);
+		IF_ERR(read(f, temppath + len, 1), -1, path);
 	}
-	read(f, temppath + len, 1);
+	IF_ERR(read(f, temppath + len, 1), -1, path);
 	if (temppath[len] == '{') { //файл или дир.
 		temppath[len] = 0;
 		unpackdir(temppath, f);
 	} else
 		unpackfile(temppath, f);
-	return 0;
+	return 1;
 }
 
 void unpack(int f, char *path)
@@ -199,10 +246,10 @@ void unpack(int f, char *path)
 
 int create(int *num, char *path, char *name)
 {
-	temparchivepath[0] = 0;
+	archpath[0] = 0;
 	if (path[0]) { //начинаем собирать путь
-		strcpy(temparchivepath, path);
-		strcat(temparchivepath, "/");
+		strcpy(archpath, path);
+		strcat(archpath, "/");
 	}
 	if (!name[0]) { //имя по умолчанию
 		name[0] = 'a';
@@ -210,14 +257,14 @@ int create(int *num, char *path, char *name)
 		name[2] = 0;
 	}
 	strcat(name, ".daf"); //dream archive file
-	strncat(temparchivepath, name, PATH_SIZE - 1 - strlen(temparchivepath));
-	temparch = open(temparchivepath, O_CREAT|O_WRONLY|O_TRUNC, 0664);
-	if (temparch == -1) {
-		perror(temparchivepath);
+	strncat(archpath, name, PATH_SIZE - 1 - strlen(archpath));
+	temp_ar = open(archpath, O_CREAT|O_WRONLY|O_TRUNC, 0664);
+	if (temp_ar == -1) {
+		perror(archpath);
 		return -1;
 	}
 	(*num)++;
-	write(temparch, "ARCHIVE", 7); //чтобы отличать
+	IF_ERR(write(temp_ar, "ARCHIVE", 7), -1, archpath); //отличие
 	return 0;
 }
 
@@ -234,14 +281,14 @@ void tonextflag(int *j, char **argv, int argc)
 int main(int argc, char *argv[])
 {
 	int i = 1, flag, tempf, num = 0;
-	char name[PATH_SIZE], path[PATH_SIZE], full[PATH_SIZE];
+	char name[NAME_SIZE], path[PATH_SIZE], full[PATH_SIZE];
 	char check[7];
 	char *twoflagserr = "Warning, two flags are entered one after another";
 	char *patherr = "Warning, the path to the file was entered";
 	char *bad = "Warning, something bad was entered";
 
 	name[0] = 0;
-	temparch = 0;
+	temp_ar = 0;
 	path[0] = 0;
 	getcwd(cwd, PATH_SIZE - 1);
 
@@ -251,10 +298,10 @@ int main(int argc, char *argv[])
 	}
 	for (; i < argc; i++) {
 		if (!strcmp("-p", argv[i])) { //флаг пути
-			if (temparch) {	//закрыть старый архив
+			if (temp_ar) {	//закрыть старый архив
+				IF_ERR(close(temp_ar), -1, name);
 				printf("Archive %s is created\n", name);
-				close(temparch);
-				temparch = 0;
+				temp_ar = 0;
 				name[0] = 0;
 				path[0] = 0;
 			}
@@ -280,9 +327,10 @@ int main(int argc, char *argv[])
 				i++;
 			}
 		} else if (!strcmp("-n", argv[i]))	{ //флаг имени
-			if (temparch) { //закрыть старый архив
-				close(temparch);
-				temparch = 0;
+			if (temp_ar) { //закрыть старый архив
+				IF_ERR(close(temp_ar), -1, name);
+				printf("Archive %s is created\n", name);
+				temp_ar = 0;
 				name[0] = 0;
 				path[0] = 0;
 			}
@@ -305,10 +353,12 @@ int main(int argc, char *argv[])
 			case 0:
 				tempf = open(full, O_RDONLY);
 				if (tempf != -1) {
-					read(tempf, check, 7);
+					IF_ERR(read(tempf, check, 7), -1, full);
 					if (!strncmp("ARCHIVE", check, 7)) {
 					//на входе архив
 						unpack(tempf, path);
+						IF_ERR(close(tempf), -1, name);
+						printf("%s unpacked\n", full);
 						//распаковать
 						break;
 					}
@@ -317,7 +367,7 @@ int main(int argc, char *argv[])
 					break;
 				}
 			case 1:
-				if (!temparch)
+				if (!temp_ar)
 					if (create(&num, path, name) == -1) {
 						tonextflag(&i, argv, argc);
 							flag = 2;
@@ -331,9 +381,9 @@ int main(int argc, char *argv[])
 			}
 		}
 	}
-	if (temparch > 0) {
-		printf("Archive %s is created\n", name);
-		close(temparch);
+	if (temp_ar > 0) {
+		IF_ERR(close(temp_ar), -1, name);
+		printf("Archive %s was created\n", name);
 	}
 	exit(0);
 }
