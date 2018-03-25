@@ -270,7 +270,7 @@ int create(int *num, char *path, char *name)
 
 void tonextflag(int *j, char **argv, int argc)
 {
-	int i;
+	int i = *j;
 
 	for (; i < (argc - 1); i++)
 		if (!strcmp("-p", argv[i+1]) || !strcmp("-n", argv[i+1]))
@@ -285,7 +285,7 @@ int main(int argc, char *argv[])
 	char check[7];
 	char *twoflagserr = "Warning, two flags are entered one after another";
 	char *patherr = "Warning, the path to the file was entered";
-	char *bad = "Warning, something bad was entered";
+	char *bad = "Warning, something bad was entered:";
 
 	name[0] = 0;
 	temp_ar = 0;
@@ -321,7 +321,7 @@ int main(int argc, char *argv[])
 					strcpy(path, full);
 					break;
 				case 2://проверим полный путь
-					printf("%s\n", bad);
+					printf("%s %s\n", bad, argv[i+1]);
 					break;
 				}
 				i++;
@@ -348,7 +348,7 @@ int main(int argc, char *argv[])
 			flag = whatisthis(argv[i], full);
 			switch (flag) {
 			case 2:
-				printf("%s\n", bad);
+				printf("%s %s\n", bad, argv[i]);
 				break;
 			case 0:
 				tempf = open(full, O_RDONLY);
