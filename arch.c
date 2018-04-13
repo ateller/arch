@@ -278,6 +278,8 @@ void tonextflag(int *j, char **argv, int argc)
 	*j = i;
 }
 
+//Телятников, группа 3О-309Б
+
 int main(int argc, char *argv[])
 {
 	int i = 1, flag, tempf, num = 0;
